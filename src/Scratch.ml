@@ -19,6 +19,8 @@ module FreeGrammar = struct
 		| T of 't
 		| NT of 'nt
 
+	type ('t, 'nt) sequents = ('t * 'nt) list
+
 	type ('t, 'nt) sequence = ('t, 'nt) sequent list
 
 	type ('t, 'nt) production = 'nt * ('t, 'nt) sequence
@@ -55,11 +57,33 @@ module FreeGrammar = struct
 		iter (fun nonterminal disjunction -> replace g nt (union (g ?? nt) d)) g';
 		g''
 
-
 	let union = fold_left (++) empty_grammar
 
 
-	let sequents (grammar: ('t, 'nt) grammar): ('t list) * ('nt list) =
+	let (--) (grammar: ('t, 'nt) grammar) (subgrammar: ('t, 'nt) grammar): ('t 'nt) grammar =
+		fold (fun nonterminal disjunction complement ->
+			let complementary_disjunction =
+				if not mem nonterminal subgrammar then
+					disjunction
+				else
+					let subgrammar_disjunction = subgrammar ?? nonterminal in
+					filter (fun sequence -> not (List.mem sequence subgrammar_disjunction)) disjunction in 
+			if (length complementary_disjunction) > 0 then
+				complement ++ (nonterminal := complementary_disjunction)
+			else
+				complement
+		) empty_grammar grammar
+
+
+	let symmetric_difference l r = (l -- r) ++ (r -- L)
+
+
+	let intersection l r = (union l r) -- (symmetric_difference l r)
+
+
+	(* Sequents *)
+
+	let sequents_of_grammar (grammar: ('t, 'nt) grammar): ('t list) * ('nt list) =
 		let maybe_add s ss = if mem s ss then ss else ss@[s] in
 		fold (fun nt sequents (ts, nts) ->
 			let nts = maybe_add nt nts in
@@ -69,65 +93,66 @@ module FreeGrammar = struct
 			) (ts, nts) sequents
 		) ([], []) grammar
 
-	let terminals grammar = fst (sequents grammar)
-	let nonterminals grammar = snd (sequents grammar)
+	let terminals grammar = fst (sequents_of_grammar grammar)
+	let nonterminals grammar = snd (sequents_of_grammar grammar)
 
 
 	(* Reachability *)
 
-	let pushout (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): 'nt list = 
-		filter (fun nt -> not (Hashtbl.mem subgrammar nt)) (nonterminals subgrammar)
-		map (fun nt -> nt := (grammar ?? nt)) (nonterminals subgrammar)
+	let cover = (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): 'nt list =
+		let nonterminals = nonterminals subgrammar in
+		filter (Hashtbl.mem grammar) nonterminals
 
-
-	let cocover (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar =
-		union grammar::(map (fun nt -> nt := (grammar ?? nt)) (pushout grammar subgrammar))
+	let pushout (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar =
+		let nonterminal_cover = cover subgrammar in
+		let covering_disjunctions = map ((??) grammar) nonterminal_cover in
+		let covering_rules = map (:=) (zip nonterminal_cover covering_disjunctions) in
+		let covering_grammar = union covering_rules in
+		subgrammar ++ covering_grammar
 
 
 	let rec reachable (grammar: ('t, 'nt) grammar) (subgrammar: ('t, 'nt) sequence): ('t, 'nt) grammar =
-		least_fixpoint (cocover grammar) subgrammar
+		least_fixpoint (pushout grammar) subgrammar
 
 
 	(* Co-Reachability *)
 
-	let pullback (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): 'nt list = 
-		pass
+	let cocover (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): 'nt list =
+		let nonterminals = nonterminals subgrammar in
+		let recognized_nonterminal: ('t, 'nt) sequence -> bool = function 
+			| T _ -> false
+			| NT nt -> List.mem nt nonterminals in
+		fold (fun nonterminal disjunction nonterminal_cocover ->
+			if any (any recognized_nonterminal) disjunction then
+				nonterminal::nonterminal_cocover
+			else
+				nonterminal_cocover
+		)) [] grammar in
 
-	let cover (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar = 
-		pass
 
-	let rec coreachable (final: 'nt) (grammar: ('t, 'nt) grammar): ('t, 'nt) grammar =
-
-		let nonterminal_closure sequents = 
-			fold (fun nonterminal disjunction grammar' ->
-				let coreachable_disjunction = filter (List.mem sequents) disjunction in
-				if (length coreachable_disjunction) = 0 then
-					grammar'
+	let pullback (grammar: ('t, 'nt) grammar)	(subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar = 
+		let nonterminal_cocover = cocover grammar (nonterminals subgrammar)
+		let cocovering_grammar =
+			fold (fun nonterminal disjunction cocovering_grammar ->
+				let cocovering_disjunction = filter (any recognized_nonterminal) disjunction in
+				if (length cocovering_disjunction) > 0 then
+					(nonterminal := cocovering_disjunction) ++ cocovering_grammar
 				else
-					grammar' ++ (nonterminal := coreachable_disjunction)
+					cocovering_grammar
 			) empty_grammar grammar in
 
-		let at_fixpoint = ref false in
-		let grammar' = ref (nonterminal_closure [final]) in
-		let nonterminal_sequents = ref (map (fun nt -> NT nt) (sequents !grammar'))
 
-		while not !at_fixpoint do
 
-			let closure = nonterminal_closure nonterminal_sequents in
+		
 
-			let grammar'' = !grammar' ++ closure in
+	let rec coreachable (grammar: ('t, 'nt) grammar) (subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar =
+		least_fixpoint (pullback grammar) subgrammar
 
-			let nonterminal_sequents' = sequents grammar'' in
 
-			if (length nonterminal_sequents') = (length !nonterminal_sequents) then
-				at_fixpoint := true			
-			else
-				grammar' := !grammar' ++ grammar'';
-				nonterminal_sequents := nonterminal_sequents';
-
-		done
-
-		!grammar'
+	let trim (grammar: ('t, 'nt) grammar) (subgrammar: ('t, 'nt) grammar): ('t, 'nt) grammar =
+		let reachable = reachable grammar subgrammar
+		and coreachable = coreachable grammar subgrammar in
+		intersection reachable coreachable
 
 	type 't buffer = <
 		method ask: int -> 't
@@ -151,7 +176,7 @@ module FreeGrammar = struct
 				val successors = reachable nt 
 				val predecessors = coreachable 
 
-				val (s, sigma) = sequents grammar
+				val (s, sigma) = sequents_of_grammar grammar
 				val parents = map self#lookup (coreachable
 
 				method lookup sequent: ['t, 'nt] sentinel =
