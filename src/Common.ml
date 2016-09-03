@@ -25,8 +25,6 @@ module PSet = functor (S: Eq) -> struct
 end
 
 
-
-
 module ConcreteSet = functor (S: Eq) -> struct
 
 	module N = PSet(S)
