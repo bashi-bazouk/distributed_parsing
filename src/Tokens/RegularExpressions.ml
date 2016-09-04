@@ -1,3 +1,4 @@
+open List
 open Stream
 open StreamParsing
 open CharacterSets
@@ -17,7 +18,6 @@ module Enhanced = struct
 		| Iterate of t * int * (int option)
 		| Conjunction of t * t
 		| Disjunction of t * t
-
 
 
 
@@ -178,7 +178,7 @@ module Enhanced = struct
 	let rec read ?acc:(r_conjunction=[]) (input: char Stream.t): t =
 		(* Reads a regular expression from input *)
 		match peek input with
-			| None -> (conjugate (List.rev r_conjunction))
+			| None -> (conjugate (rev r_conjunction))
 			| Some c ->
 				(match c with
 					| ' ' | '\t' -> 
@@ -243,9 +243,9 @@ module Enhanced = struct
 				| c -> 
 					r_buffer := (next input)::!r_buffer
 		done;
-		Printf.printf "Got sub-regex %s\n" (String.init (List.length !r_buffer)  (fun i -> List.nth (List.rev !r_buffer) i));
+		Printf.printf "Got sub-regex %s\n" (String.init (length !r_buffer)  (fun i -> nth (rev !r_buffer) i));
 		junk input;
-		read (Stream.of_list (List.rev !r_buffer))
+		read (Stream.of_list (rev !r_buffer))
 *)
 
 
@@ -255,7 +255,7 @@ module Enhanced = struct
 		| End -> "$"
 		| Wildcard -> "."
 		| CharacterSet cs ->
-			CharacterSet.show ~escaped:(List.map int_of_char ['\\'; '^'; '$'; '('; ')'; '{'; '}'; '['; ']'; '*'; '+'; '?'; '|']) cs
+			CharacterSet.show ~escaped:(map int_of_char ['\\'; '^'; '$'; '('; ')'; '{'; '}'; '['; ']'; '*'; '+'; '?'; '|']) cs
 		| Group r ->
 			"(" ^ (show r) ^ ")"
 		| Iterate (r, min, maybe_max) ->
@@ -281,7 +281,7 @@ module Enhanced = struct
 
 	open Format
 
-	let rec inspect (r: t) =
+	let rec print (r: t) =
 		let group_count = ref 1 in
 		let rec print = function
 			| Nil ->
@@ -337,19 +337,98 @@ module Enhanced = struct
 		print r
 
 
+
+
+
+	(* Analysis*)
+
+	let rec destructure: t -> (t * t) list = function
+		(* breaks a regexp into a (head, tail) structure, by breaking a conjunction. *)
+		| Nil
+		| Start
+		| End 
+		| Wildcard
+		| CharacterSet _ -> []
+		| Group x -> destructure x
+		| Conjunction(Nil, tail) ->
+			destructure tail
+		| Conjunction(a, b) ->
+			let cases = destructure a in
+			map (fun (hd,tl) -> (hd, Conjunction(tl, b))) cases
+		| Iterate(regexp, min, Some max) ->
+			if max > 1 then
+				let cases = destructure regexp in
+				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(regexp, min-1, Some(max-1))))) cases
+			else
+				if max = 1 then
+					let cases = destructure regexp in
+					map (fun (hd,tl) -> (hd, Nil)) cases
+				else
+					[]
+		| Iterate(regexp, min, None) ->
+				let cases = destructure regexp in
+				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(regexp, min-1, None)))) cases
+		| Disjunction(a,b) ->
+			(destructure a)@(destructure b)
+
+
+	module Index = struct
+		(* There are a variety of unique indices. This one indexes from the boundaries of its subgroups.
+		 * A unit is the printed width of a `cardinal` regex, which is derived from the target regex.
+		 * A regex with n subgroups has 2n indices [i_0; i_1; ...; i_n].
+	   * A negative index indicates that a boundary has not yet been crossed.
+	   * Inversely, a positive index indicates that a boundary has been crossed.
+	   * A positive index that is equal to the cardinality of its subgroup indicates a closing boundary has been crossed.
+	   * A positive index that is greater than n times the cardinality of its subgroup indicates n previous iterations.
+		 *)
+
+		type boundary = Open | Close
+
+
+		let rec cardinal: t -> t = function
+			(* cardinal regexp returns a regexp which, for any given iteration,
+				 iterates at least once, but not more than the minimum number of iterations. *)
+			| Group(x) -> Group (cardinal x)
+			| Conjunction(l,r) -> Conjunction(cardinal l, cardinal r)
+			| Disjunction(l,r) -> Disjunction(cardinal l, cardinal r)
+			| Iterate(regexp, minimum, _) ->
+				let minimum = min 1 minimum in
+				let iterations = Array.to_list (Array.make minimum regexp) in
+				fold_left (fun acc x -> Conjunction(acc, x)) (hd iterations) (tl iterations)
+			| default -> default
+(*
+		let rec cardinality: t -> int = function
+			(* cardinality regexp is (essentially) the (printed) size of cardinal regexp.*)
+			| Nil | Start | End -> 0
+			| Wildcard | CharacterSet(_) -> 1
+			| Group(x) -> cardinality x
+			| Iterate(_,_,_) as i -> cardinality (cardinal i)
+			| Conjunction(x,y)
+			| Disjunction(x,y) -> (cardinality x) + (cardinality y)
+
+		let basis t: (boundary * int) list =
+			let rec accumulate
+				?partial:(acc=[(Open, 0)])
+				?count:(i=0) 
+				= function
+					| Nil
+					| Start
+					| End -> acc@[(Close, i)]
+					| Wildcard
+					| CharacterSet _ -> acc@[(Close, i+1)]
+					| Group(x) ->
+						acc@(accumulate ~boundaries:[(Open, i)] ~count:i)
+					| Iterate(_,_,_) as i -> 
+						accumulate ~partial:acc ~count:i (cardinal i)
+					| Conjunction(l,r) ->
+
+*)
+	end
+
+
+
+
 end
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
