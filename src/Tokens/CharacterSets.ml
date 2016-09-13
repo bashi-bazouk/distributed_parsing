@@ -8,6 +8,8 @@ module CharacterSet =
 		val cardinality: int
 	end) -> struct
 
+	let top = S.cardinality - 1
+
 	type t = {
 		complemented: bool;
 		mutable points: int list;
@@ -23,6 +25,17 @@ module CharacterSet =
 
 	let interval ivl = { empty with intervals = [ivl] }
 
+	let wildcard = interval (0,top)
+
+	let mem (character: int) (character_set: t) =
+		character_set.complemented <>
+			(
+				(||)
+					(List.exists
+						(fun (x,y) -> x <= character && character <= y) 
+						character_set.intervals)
+					(List.mem character character_set.points)
+			)
 
 	let push s (x,y) =
 		if y < x then

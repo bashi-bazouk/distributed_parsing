@@ -11,9 +11,14 @@ module Enhanced = struct
 	module CharacterSet = CharacterSets.ASCII
 	type character_set = CharacterSets.ASCII.t
 
-	type t =
-		| Nil | Start | End | Wildcard
+	type primitive = 
+		| Start
+		| End
 		| CharacterSet of character_set
+
+	type t =
+		| Accept
+		| Primitive of primitive
 		| Group of t
 		| Iterate of t * int * (int option)
 		| Conjunction of t * t
@@ -24,7 +29,7 @@ module Enhanced = struct
 	(* Regular expression parsing! *)
 
 	let read_escape_character (input: char Stream.t) =
-		(* Reads a top-level escape character from a regular expression string. *)
+		(* Reads a top-level escape character from a regular eession string. *)
 		junk input;
 		match assert_one input "Expected an escape character" with
 			| '\\' ->
@@ -77,29 +82,29 @@ module Enhanced = struct
 
 
 	let rec read_one ?nesting:(nesting=0) (input: char Stream.t): t =
-		(* Reads a single sub-expression from a regular expression string. *)
+		(* Reads a single sub-eession from a regular eession string. *)
 		let base = 
 			(match assert_one input "End of Input" with
 				| '^' -> 
 					junk input;
-					Start
+					Primitive(Start)
 				| '$' ->
 					junk input;
-					End
+					Primitive(End)
 				| '.' ->
 					junk input;
-					Wildcard
+					Primitive(CharacterSet(CharacterSet.wildcard))
 				| '(' ->
 					junk input;
 					let group = Group (read ~nesting:(nesting+1) input) in
 					junk input;
 					group
 				| '\\' ->
-					read_escape_character input
+					Primitive(read_escape_character input)
 				| '[' ->
-					CharacterSet (CharacterSet.read input)
+					Primitive(CharacterSet(CharacterSet.read input))
 				| c ->
-					CharacterSet (CharacterSet.point (CharacterSet.read_point input))
+					Primitive(CharacterSet(CharacterSet.point (CharacterSet.read_point input)))
 					) in
 		match peek input with
 			| Some '*' ->
@@ -139,7 +144,7 @@ module Enhanced = struct
 				base
 
 
-	and read ?nesting:(nesting=0) ?prev:(prev=Nil) (input: char Stream.t): t =
+	and read ?nesting:(nesting=0) ?prev:(prev=Accept) (input: char Stream.t): t =
 		match peek input with
 			| None -> 
 				if nesting > 1 then
@@ -155,107 +160,27 @@ module Enhanced = struct
 							prev
 					| '|' ->
 						junk input;
-						let next = read ~nesting:nesting ~prev:Nil input in
+						let next = read ~nesting:nesting ~prev:Accept input in
 						read ~nesting:nesting ~prev:(Disjunction(prev, next)) input
 					| _ ->
 						let next = read_one ~nesting:nesting input in
 						(match prev with
-							| Nil ->
+							| Accept ->
 								read ~nesting:nesting ~prev:next input
 							| _ ->
 								read ~nesting:nesting ~prev:(Conjunction(prev, next)) input)
 				)
 
 
-
-
-
-
-
-
-
-(*
-	let rec read ?acc:(r_conjunction=[]) (input: char Stream.t): t =
-		(* Reads a regular expression from input *)
-		match peek input with
-			| None -> (conjugate (rev r_conjunction))
-			| Some c ->
-				(match c with
-					| ' ' | '\t' -> 
-						junk input;
-						read ~acc:r_conjunction input
-					| '^' -> 
-						junk input;
-						read ~acc:(Start::r_conjunction) input
-					| '$' ->
-						junk input;
-						read ~acc:(End::r_conjunction) input
-					| '.' ->
-						junk input;
-						read ~acc:(Wildcard::r_conjunction) input
-					| '*' ->
-						(match r_conjunction with
-							| last::initial ->
-								junk input;
-								read ~acc:(Iterate(last, 0, None)::initial) input
-							| [] -> fail input)
-					| '?' ->
-						(match r_conjunction with
-							| last::initial ->
-								junk input;
-								read ~acc:(Iterate(last, 0, Some 1)::initial) input
-							| [] -> fail input)
-					| '+' ->
-						(match r_conjunction with
-							| last::initial ->
-								junk input;
-								read ~acc:(Iterate(last, 0, None)::initial) input
-							| [] -> fail input)
-					| '(' ->
-						read ~acc:((read_group input)::r_conjunction) input
-					| '\\' ->
-						read ~acc:((read_escape_character input)::r_conjunction) input
-					| '[' ->
-						read ~acc:((CharacterSet (CharacterSet.read input))::r_conjunction) input
-					| c ->
-						read ~acc:((CharacterSet (CharacterSet.point (CharacterSet.read_point input)))::r_conjunction) input
-				)
-						
-
-
-	and read_group (input: char Stream.t) =
-		(* Reads a grouped regular expression from input *)
-		let current_column = count input in
-		junk input;
-		let nesting = ref 1
-		and r_buffer = ref [] in
-		while not (((peek input) = Some ')') && (!nesting = 1)) do
-			match assert_one input (sprintf "unmatched ( at %i" current_column) with
-				| '\\' ->
-					junk input;
-					r_buffer := (next input)::'\\'::!r_buffer
-				| ')' ->
-					decr nesting;
-					r_buffer := (next input)::!r_buffer
-				| '(' ->
-					incr nesting;
-					r_buffer := (next input)::!r_buffer
-				| c -> 
-					r_buffer := (next input)::!r_buffer
-		done;
-		Printf.printf "Got sub-regex %s\n" (String.init (length !r_buffer)  (fun i -> nth (rev !r_buffer) i));
-		junk input;
-		read (Stream.of_list (rev !r_buffer))
-*)
-
-
 	let rec show = function
-		| Nil -> ""
-		| Start -> "^"
-		| End -> "$"
-		| Wildcard -> "."
-		| CharacterSet cs ->
-			CharacterSet.show ~escaped:(map int_of_char ['\\'; '^'; '$'; '('; ')'; '{'; '}'; '['; ']'; '*'; '+'; '?'; '|']) cs
+		| Accept -> ""
+		| Primitive(Start) -> "^"
+		| Primitive(End) -> "$"
+		| Primitive(CharacterSet(cs)) ->
+			if cs = CharacterSet.wildcard then
+				"."
+			else
+				CharacterSet.show ~escaped:(map int_of_char ['\\'; '^'; '$'; '('; ')'; '{'; '}'; '['; ']'; '*'; '+'; '?'; '|']) cs
 		| Group r ->
 			"(" ^ (show r) ^ ")"
 		| Iterate (r, min, maybe_max) ->
@@ -284,16 +209,17 @@ module Enhanced = struct
 	let rec print (r: t) =
 		let group_count = ref 1 in
 		let rec print = function
-			| Nil ->
-				print_string "Nil";
-			| Start ->
+			| Accept ->
+				print_string "Accept";
+			| Primitive(Start) ->
 				print_string "Start";
-			| End ->
+			| Primitive(End) ->
 				print_string "End";
-			| Wildcard ->
-				print_string "Wildcard";
-			| CharacterSet cs ->
-				print_string (CharacterSet.show cs);
+			| Primitive(CharacterSet(cs)) ->
+				if cs = CharacterSet.wildcard then
+					print_string "Wildcard"
+				else
+					print_string (CharacterSet.show cs);
 			| Group r ->
 				printf "Group %d (" !group_count;
 				incr group_count;
@@ -337,97 +263,392 @@ module Enhanced = struct
 		print r
 
 
+	(* Analysis *)
+
+	let rec nondeterministic_step: t -> t list = function
+		| Accept ->
+			[ ]
+
+		| Primitive(_) ->
+			[Accept]
+
+		| Conjunction(Primitive(_), regexp) ->
+			[regexp]
+
+		| Conjunction(Accept, regexp) ->
+			nondeterministic_step regexp
+
+		| Conjunction(regexp, regexp') ->
+			let substeps = nondeterministic_step regexp in
+			map (fun regexp'' -> Conjunction(regexp'', regexp')) substeps
+
+		| Disjunction(left, right) ->
+			(nondeterministic_step left)@(nondeterministic_step right)
+
+		| Iterate(Accept, _, _)
+		| Iterate(_, 0, Some 0) -> [Accept]
+		| Iterate(regexp, 0, Some max) ->
+			[Accept]@(nondeterministic_step (Conjunction(regexp, Iterate(regexp, 0, Some (max-1)))))
+
+		| Iterate(regexp, min, Some max) ->
+			nondeterministic_step (Conjunction(regexp, Iterate(regexp, min-1, Some(max-1))))
+
+		| Iterate(regexp, min, None) ->
+			nondeterministic_step (Conjunction(regexp, Iterate(regexp, min-1, None)))
+
+		| Group(regexp) ->
+			let substeps =  nondeterministic_step regexp in
+			map (fun regexp' -> Group(regexp')) substeps
+
+
+	let rec nondeterministic_bfs
+		?visitor:(visitor=fun _ -> ()) 
+		?terminate:(terminate=fun _ -> false)
+		: t list -> unit = function
+		| [] -> ()
+		| hd::tl ->
+			if terminate hd then
+				nondeterministic_bfs tl
+			else
+				(visitor hd;
+				nondeterministic_bfs (tl@(nondeterministic_step hd)))
+
+	let breadth_first_search ?visitor ?terminate (regexp: t): unit =
+		nondeterministic_bfs ?visitor:visitor ?terminate:terminate [regexp]
+
+
+	(* Actions *)
+
+	type transition = t * t
+	type action = primitive option * transition
+	type actions = (primitive option, transition) Hashtbl.t
+
+	let rec actions ~table:(table: (primitive option, t * t) Hashtbl.t) (regexp: t): actions =
+		let declare_transition ?action target =
+			Hashtbl.add table action (regexp, target) in
+		(match regexp with
+			| Accept -> ()
+
+			| Primitive(primitive) -> declare_transition ~action:primitive Accept
+
+			| Group(regexp') -> declare_transition regexp'
+
+			| Iterate(Accept, _, _)
+			| Iterate(_, _, Some 0) -> 
+				declare_transition Accept
+
+			| Iterate(regexp', 0, None) ->
+				declare_transition (Conjunction(regexp', Iterate(regexp', 0, None)));
+				declare_transition Accept
+
+			| Iterate(regexp', min, None) ->
+				declare_transition (Conjunction(regexp', Iterate(regexp', min-1, None)))
+
+			| Iterate(regexp', 0, Some max) ->
+				declare_transition (Conjunction(regexp', Iterate(regexp', 0, Some (max-1))));
+				declare_transition Accept
+
+			| Iterate(regexp', min, Some max) ->
+				declare_transition (Conjunction(regexp', Iterate(regexp', min-1, Some (max-1))))
+
+			| Conjunction(Accept, regexp') ->
+				declare_transition regexp'
+
+			| Conjunction(regexp', regexp'') ->
+				let subactions = actions ~table:(Hashtbl.create 8) regexp' in
+				Hashtbl.iter (fun a (_, reduced) -> 
+					declare_transition 
+						?action:a 
+						(Conjunction(reduced, regexp''))
+				) subactions
+
+			| Disjunction(regexp', regexp'') ->
+				declare_transition regexp';
+				declare_transition regexp''
+		);
+		table
+
+
+	module Analyzer = struct
+
+		(* An analyzer is a character-stream processor, that takes a regular expression as a parameter.
+		 * The analyzer treats the character-stream directly.
+		 * The analyzer can be 
+		 *   a) reset to an initial state (all ones), and
+		 *   b) run deterministically or nondeterministically
+		 * The analyzer will
+		 *   - output the boundaries of complete matches.
+		 *   - track and output the boundaries of incomplete matches
+		 *   - track the presence of grouped reductions, and pass-thru captured text.
+
+		*)
+
+		type analyzer = {
+			cardinality: int;
+			alphabet: t array;
+			reverse_index: (t, int) Hashtbl.t;
+			transitions: (int option, int) Hashtbl.t;
+
+			cursor: int array;
+		}
+
+		let load (regexp: t): analyzer =
+			pass
+
+		let reset (analyzer: analyzer) =
+			Array.fill analyzer.cursor 0 analyzer.cardinality 1
+
+
+		let state_machine_of_regexp (regexp: t) =
+			let cardinality = ref 0
+			and reverse_index = Hashtbl.create 64
+			and transitions = Hashtbl.create 256 in
+			breadth_first_search
+				~visitor:(fun regexp ->
+					Hashtbl.add reverse_index regexp !cardinality;
+					incr cardinality;
+					List.iter (fun next -> 
+						try
+							Hashtbl.add transitions (!cardinality-1) (Hashtbl.find reverse_index next)
+						with Not_found ->
+							(Hashtbl.add reverse_index next !cardinality;
+							Hashtbl.add transitions (!cardinality-1) !cardinality;
+							incr cardinality)
+					) (nondeterministic_step regexp))
+				~terminate:(fun regexp ->
+					try
+						Hashtbl.find_all transitions (Hashtbl.find reverse_index regexp) > 0
+					with Not_found ->
+						false)
+				regexp;
+			let alphabet = Array.make cardinality Accept in
+			Hashtbl.iter (fun (regexp, i) -> Array.set alphabet i regexp) reverse_index;
+			{ cardinality= !cardinality;
+				alphabet;
+				reverse_index;
+				transitions }
+
+		type cursor = int array
+
+		let init (state_machine: state_machine): cursor = Array.make state_machine.cardinality 1
+		let term (state_machine: state_machine): cursor = Array.make state_machine.cardinality 0
+
+
+		let step ?cursor' (state_machine: state_machine) (cursor: cursor): unit =
+			let cursor' = Array.make state_machine.cardinality 0 in
+			let updates =
+				Array.mapi
+					(fun multiplicity i ->
+						if multiplicity > 0 then
+							fun () ->
+								List.iter
+									(fun next -> cursor'.(next) <- cursor'.(next) + multiplicity)
+									(Hashtbl.find_all state_machine.transitions i)
+						else
+							fun _ -> ())
+					cursor in
+			
+			Array.iter (fun update -> update(cursor')) updates;
+			cursor'
+
+	end
+(*
+
+
+	let index (regexp: t): (t, int) Hashtbl =
+		let cardinality = ref 0
+		and table = Hashtbl.create 64 in
+		nondeterministic_bfs
+			~visitor:(fun regexp ->
+				Hashtbl.add table regexp !cardinality;
+				incr cardinality)
+			~terminate:(Hashtbl.mem table)
+			regexp;
+		table
+
+
+	let transitions (regexp: t): (int -> int) Hashtbl =
+		let cardinality = ref 0
+		and table = Hashtbl.create 64 in
+		nondeterministic_bfs
+			~visitor:(fun regexp ->
 
 
 
-	(* Analysis*)
+	type analysis = {
+		mutable index: t list;
+		transitions: (t, t) Hashtbl;
+	}
+
+	let analyze (regexp: t) =
+		let bfs 
+		
+
 
 	let rec destructure: t -> (t * t) list = function
-		(* breaks a regexp into a (head, tail) structure, by breaking a conjunction. *)
-		| Nil
-		| Start
-		| End 
-		| Wildcard
-		| CharacterSet _ -> []
+		(* breaks a regular expression into a (head, tail) structure, by breaking a conjunction. *)
+		| Accept -> [(Accept,[])]
+		| Primitive(_) as p -> [(p,[])]
 		| Group x -> destructure x
-		| Conjunction(Nil, tail) ->
+		| Conjunction(Accept, tail) ->
 			destructure tail
-		| Conjunction(a, b) ->
-			let cases = destructure a in
-			map (fun (hd,tl) -> (hd, Conjunction(tl, b))) cases
-		| Iterate(regexp, min, Some max) ->
+		| Conjunction(e, e') ->
+			let cases = destructure e in
+			map (function
+				| (hd, Accept) ->
+					(hd, e')
+				| (hd, tl) ->
+					(hd, Conjunction(tl, e'))) cases
+		| Iterate(e, min, Some max) ->
 			if max > 1 then
-				let cases = destructure regexp in
-				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(regexp, min-1, Some(max-1))))) cases
+				let cases = destructure e in
+				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(e, min-1, Some(max-1))))) cases
 			else
 				if max = 1 then
-					let cases = destructure regexp in
-					map (fun (hd,tl) -> (hd, Nil)) cases
+					let cases = destructure e in
+					map (fun (hd,tl) -> (hd, Accept)) cases
 				else
 					[]
-		| Iterate(regexp, min, None) ->
-				let cases = destructure regexp in
-				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(regexp, min-1, None)))) cases
+		| Iterate(e, min, None) ->
+				let cases = destructure e in
+				map (fun (hd,tl) -> (hd, Conjunction(tl, Iterate(e, min-1, None)))) cases
 		| Disjunction(a,b) ->
 			(destructure a)@(destructure b)
 
+	let iteri ?offset:(offset=0) callback: t -> int = function
+		| Accept -> ()
+
+		| Primitive(_) -> ()
+
+
+
+	let rec project_primitives: t -> primitive list = function
+		| Accept -> []
+		| Primitive(c) -> [c]
+		| Group(g) -> project_primitives(g)
+		| Iterate(i,_,_) ->
+			project_primitives(i)
+		| Conjunction(l,r) ->
+			(project_primitives l)@(project_primitives r)
+		| Disjunction(l,r) ->
+			(project_primitives l)@(project_primitives r)
+
+
+	let rec project_transitions ?offset:(offset=0) declare = function
+		| Accept -> ()
+		| 
+
 
 	module Index = struct
-		(* There are a variety of unique indices. This one indexes from the boundaries of its subgroups.
-		 * A unit is the printed width of a `cardinal` regex, which is derived from the target regex.
-		 * A regex with n subgroups has 2n indices [i_0; i_1; ...; i_n].
-	   * A negative index indicates that a boundary has not yet been crossed.
-	   * Inversely, a positive index indicates that a boundary has been crossed.
-	   * A positive index that is equal to the cardinality of its subgroup indicates a closing boundary has been crossed.
-	   * A positive index that is greater than n times the cardinality of its subgroup indicates n previous iterations.
-		 *)
 
-		type boundary = Open | Close
+		type basis = {
+			regexp: t;
+			count: int;
+			subbases: (int * basis) list;
+		}
+		
+		type expanded_coordinates = (int * int) list
+		type coordinates = int list
+		type index = int
 
+		let rec generate_basis (regexp: t) =
+			let rec flat_fold ?count:(count=0) ?subbases:(subbases=[]) = function
+				| Primitive(Start)
+				| Primitive(End)
+				| Accept as regexp -> { regexp; count; subbases }
+				| Primitive(CharacterSet(_)) ->
+					{ regexp; count=(count+1); subbases }
+				| Group(x) ->
+					flat_fold ~count:count ~subbases:subbases x
+				| Iterate(x, min, maybe_max) ->
+					let subbasis = generate_basis x in
+					{ regexp; count; subbases=subbases@[(count, subbasis)] }
+				| Conjunction(l,r) ->
+					let basis' = flat_fold ~count:count ~subbases:subbases l in
+					flat_fold ~count:basis'.count ~subbases:basis'.subbases r
+				| Disjunction(l,r) ->
+					let subbasis_0 = generate_basis l
+					and subbasis_1 = generate_basis r in
+					{ regexp; count; subbases=subbases@[(count, subbasis_0); (count, subbasis_1)] } in
+			flat_fold regexp
+
+		let project_transitions (regexp: t): (int list) array =
+			let basis = generate_basis regexp in
+			let transitions = Array.make (
+
+
+		let rec flatten_basis basis =
+			let rec fold_basis r_prefix (_, basis) =
+				fold_left fold_basis (basis.count::r_prefix) basis.subbases in
+			rev (fold_basis [] (0, basis))
+
+		let expand_coordinates c basis =
+			combine c (flatten_basis basis)
+
+
+		let rec unique_indices (basis: basis): int =
+			fold_left (+) basis.count (map unique_indices (map snd basis.subbases))
+
+
+		let rec coordinates_of_index i basis =
+			match basis.subbases with
+				| [] ->
+					if i >= basis.count then
+						raise Not_found
+					else
+						[i]
+				| (start, subbasis)::rest ->
+					if i <= start then
+						i::(map (fun _ -> 0) basis.subbases)
+					else
+						try
+							start::(coordinates_of_index (i-start) subbasis)
+						with
+							Not_found ->
+								coordinates_of_index i { basis with subbases=rest }
 
 		let rec cardinal: t -> t = function
-			(* cardinal regexp returns a regexp which, for any given iteration,
-				 iterates at least once, but not more than the minimum number of iterations. *)
+			(* cardinal regexp returns a regular expression, where 
+			 * Iterations and Disjunctions have been mapped to Conjunctions. *)
 			| Group(x) -> Group (cardinal x)
-			| Conjunction(l,r) -> Conjunction(cardinal l, cardinal r)
-			| Disjunction(l,r) -> Disjunction(cardinal l, cardinal r)
-			| Iterate(regexp, minimum, _) ->
+			| Conjunction(l,r)
+			| Disjunction(l,r) -> Conjunction(cardinal l, cardinal r)
+			| Iterate(e, minimum, _) ->
 				let minimum = min 1 minimum in
-				let iterations = Array.to_list (Array.make minimum regexp) in
+				let iterations = Array.to_list (Array.make minimum e) in
 				fold_left (fun acc x -> Conjunction(acc, x)) (hd iterations) (tl iterations)
 			| default -> default
-(*
+
+
 		let rec cardinality: t -> int = function
-			(* cardinality regexp is (essentially) the (printed) size of cardinal regexp.*)
-			| Nil | Start | End -> 0
-			| Wildcard | CharacterSet(_) -> 1
+			(* cardinality e is (essentially) the (printed) size of cardinal e. *)
+			| Accept -> 0
+			| Primitive(_) -> 1
 			| Group(x) -> cardinality x
 			| Iterate(_,_,_) as i -> cardinality (cardinal i)
 			| Conjunction(x,y)
 			| Disjunction(x,y) -> (cardinality x) + (cardinality y)
 
-		let basis t: (boundary * int) list =
-			let rec accumulate
-				?partial:(acc=[(Open, 0)])
-				?count:(i=0) 
-				= function
-					| Nil
-					| Start
-					| End -> acc@[(Close, i)]
-					| Wildcard
-					| CharacterSet _ -> acc@[(Close, i+1)]
-					| Group(x) ->
-						acc@(accumulate ~boundaries:[(Open, i)] ~count:i)
-					| Iterate(_,_,_) as i -> 
-						accumulate ~partial:acc ~count:i (cardinal i)
-					| Conjunction(l,r) ->
-
-*)
 	end
 
 
+	module Matcher = struct
+		open Index
 
+		type matching = {
+			primitives: primitive array;
+			transitions: int -> int list;
+			multiplicities: int array;
+		}
+(*
+		let build_from_regexp (regexp: t): t =
+			let basis = generate_basis regexp in
+			let 
+*)
 
+	end
+
+*)
 end
 
 

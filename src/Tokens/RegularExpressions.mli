@@ -1,45 +1,56 @@
-val sprintf : ('a, unit, string) format -> 'a
-module Enhanced :
+val sprintf: ('a, unit, string) format -> 'a
+module Enhanced:
   sig
     
     module CharacterSet = CharacterSets.ASCII
     type character_set = CharacterSets.ASCII.t
-    
-    type t =
-        Nil
+
+    type prim = 
       | Start
       | End
-      | Wildcard
       | CharacterSet of character_set
+
+    type t =
+      | Accept
+      | Primitive of prim
       | Group of t
-      | Iterate of t * int * int option
+      | Iterate of t * int * (int option)
       | Conjunction of t * t
       | Disjunction of t * t
 
-    val read_escape_character : char Stream.t -> t
+    val read_escape_character: char Stream.t -> prim
 
-    val read_one : ?nesting:int -> char Stream.t -> t
+    val read_one: ?nesting:int -> char Stream.t -> t
 
-    val read : ?nesting:int -> ?prev:t -> char Stream.t -> t
+    val read: ?nesting:int -> ?prev:t -> char Stream.t -> t
 
-    val show : t -> string
+    val show: t -> string
 
-    val print : t -> unit
+    val print: t -> unit
 
 
     (* Analysis *)
 
-    val destructure : t -> (t * t) list
+    val destructure: t -> (t * t) list
 
-    module Index : sig
+    module Index: sig
 
-      type boundary = Open | Close
+      type basis
+
+      val cardinal: t -> t
+
+      val generate_basis: t -> basis
+
+      val unique_indices: basis -> int
 
       val cardinal: t -> t
 
       val cardinality: t -> int
 
-      val basis: t -> (boundary * int) list
-
     end
+
+    module Matcher: sig
+
+
+    end 
   end
